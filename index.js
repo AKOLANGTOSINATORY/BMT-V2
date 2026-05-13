@@ -1,163 +1,91 @@
 const express = require("express");
-const rbx = require("noblox.js");
-const dotenv = require("dotenv");
-
-dotenv.config();
+const axios = require("axios");
+require("dotenv").config();
 
 const app = express();
 app.use(express.json());
 
-// =============================
-// CONFIG
-// =============================
-const COOKIE = process.env.COOKIE;
+const ROBLOX_API_KEY = process.env.ROBLOX_API_KEY; 
 
-if (!COOKIE) {
-	console.error("❌ Missing COOKIE");
+if (!ROBLOX_API_KEY) {
+	console.error("❌ Missing ROBLOX_API_KEY environment variable");
 	process.exit(1);
 }
 
-const VALID_KEYS = new Set([
-	"9e2c7b4f1a6d0e8f5c3b9a4d7e1f2c8b6a5" // [PNP] - Philippine National Police 10148023, 2month bago expire
-]);
-
-const KEY_BINDINGS = new Map();
+// =============================
+// CUSTOMER DATABASE (WHITELIST)
+// =============================
+const whitelistData = [
+    { 
+        groupname: "SeintSlavx Main Group", 
+        groupid: 32363103, // Matches Admin.Core.GroupID
+        groupsecretkey: "9e2c7b4f1a6d0e8f5c3b9a4d7e1f2c8b6a5", // Matches your SetupMEV2 APIKeyV2
+        Suspended: false 
+    }
+];
 
 // =============================
-// LICENSE (STRICT PLACE ID LOCK)
+// SECURE STARTUP CHECK
 // =============================
-function validateKey(key, placeId) {
-	if (!key || !placeId) return { ok: false };
-	if (!VALID_KEYS.has(key)) return { ok: false };
+app.get("/checkkey", (req, res) => {
+    const providedKey = req.headers["x-auth-key"];
+    const groupId = Number(req.query.groupid);
 
-	const bound = KEY_BINDINGS.get(key);
+    const customer = whitelistData.find(c => c.groupid === groupId);
 
-	if (!bound) {
-		KEY_BINDINGS.set(key, placeId);
-		return { ok: true };
-	}
+    if (!customer || customer.groupsecretkey !== providedKey) {
+        return res.status(403).json({ ok: false, error: "INVALID_LICENSE" });
+    }
 
-	if (bound !== placeId) return { ok: false };
+    if (customer.Suspended) {
+        return res.status(403).json({ ok: false, error: "SUBSCRIPTION_SUSPENDED" });
+    }
 
-	return { ok: true };
-}
-
-function requireLicense(req, res) {
-	const key = req.query.key;
-	const placeId = Number(req.query.placeid);
-
-	const result = validateKey(key, placeId);
-	if (!result.ok) {
-		res.status(403).json({ ok: false, error: "INVALID_LICENSE" });
-		return null;
-	}
-
-	return { key, placeId };
-}
+    return res.json({ ok: true, message: "API Key Valid & Connected" });
+});
 
 // =============================
-// WEBHOOK
+// SETRANK ENDPOINT (OPEN CLOUD)
 // =============================
-async function sendWebhook(payload) {
-	const url = process.env.WEBHOOK_URL;
-	if (!url) return;
+app.post("/setrank", async (req, res) => {
+    const providedKey = req.headers["x-auth-key"];
+    const { userId, roleId, groupId } = req.body; 
 
-	try {
-		await fetch(url, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(payload),
-		});
-	} catch (e) {
-		console.log("Webhook error:", e.message);
-	}
-}
+    // 1. Validation & Security
+    const customer = whitelistData.find(c => c.groupid === Number(groupId));
 
-// =============================
-// START ROBLOX
-// =============================
-async function start() {
-	await rbx.setCookie(COOKIE);
-	console.log("✅ Logged into Roblox backend");
-	
-	// =============================
-	// CHECK KEY (SECURE STARTUP CHECK)
-	// =============================
-	app.get("/checkkey", (req, res) => {
-		const key = req.query.key;
-		const placeId = Number(req.query.placeid);
+    if (!customer) return res.status(403).json({ ok: false, error: "GROUP_NOT_WHITELISTED" });
+    if (customer.groupsecretkey !== providedKey) return res.status(401).json({ ok: false, error: "INVALID_SECRET_KEY" });
+    if (customer.Suspended) return res.status(403).json({ ok: false, error: "SUBSCRIPTION_SUSPENDED" });
 
-		// Now this actively locks/verifies the placeId immediately on server start
-		const result = validateKey(key, placeId);
-		
-		if (!result.ok) {
-			return res.status(403).json({ ok: false, error: "INVALID_LICENSE" });
-		}
+    try {
+        // 2. Rank Translation (0-255 to Role ID)
+        const rolesRes = await axios.get(`https://groups.roblox.com/v1/groups/${groupId}/roles`);
+        const targetRole = rolesRes.data.roles.find(r => r.rank === roleId);
 
-		return res.json({ ok: true, message: "API Key Valid & Locked to Place" });
-	});
-	
-	// =============================
-	// SETRANK (ONLY ENDPOINT)
-	// =============================
-	app.get("/setrank", async (req, res) => {
-		const lic = requireLicense(req, res);
-		if (!lic) return;
+        if (!targetRole) return res.status(404).json({ ok: false, error: "RANK_NOT_FOUND" });
 
-		const userId = Number(req.query.userid);
-		const rank = Number(req.query.rank);
-		const groupId = Number(req.query.groupid);
+        // 3. Execute Open Cloud Rank Change
+        const url = `https://apis.roblox.com/cloud/v2/groups/${groupId}/memberships/${userId}`;
+        await axios.patch(url, 
+            { role: `groups/${groupId}/roles/${targetRole.id}` }, 
+            { headers: { "x-api-key": ROBLOX_API_KEY, "Content-Type": "application/json" } }
+        );
 
-		if (!userId || !rank || !groupId) {
-			return res.status(400).json({ ok: false });
-		}
+        console.log(`✅ Success: User ${userId} ranked up in Group ${groupId}`);
+        return res.json({ ok: true, message: `Ranked to ${targetRole.name}` });
 
-		try {
-			const current = await rbx.getRankInGroup(groupId, userId);
+    } catch (error) {
+        console.error("❌ Roblox API Error:", error.response?.data || error.message);
+        return res.status(500).json({ ok: false, error: "ROBLOX_API_ERROR" });
+    }
+});
 
-			if (current === rank) {
-				return res.json({ ok: true, ignored: true });
-			}
+// Root route hides passwords
+app.get("/", (req, res) => {
+    const publicList = whitelistData.map(c => ({ groupname: c.groupname, groupid: c.groupid, Suspended: c.Suspended }));
+    res.json(publicList);
+});
 
-			await rbx.setRank(groupId, userId, rank);
-
-			// 🔥 SINGLE LOG SYSTEM
-			await sendWebhook({
-				event: "rank_change",
-				userId,
-				groupId,
-				from: current,
-				to: rank,
-				placeId: lic.placeId
-			});
-
-			return res.json({
-				ok: true,
-				from: current,
-				to: rank
-			});
-
-		} catch (e) {
-			console.log(e);
-			res.status(500).json({ ok: false });
-		}
-	});
-
-	// =============================
-	// ROOT
-	// =============================
-	app.get("/", (req, res) => {
-		res.send("BMT Backend Running");
-	});
-
-	// =============================
-	// START SERVER
-	// =============================
-	const PORT = process.env.PORT || 3000;
-
-	app.listen(PORT, () => {
-		console.log("🚀 Running on port", PORT);
-	});
-}
-
-start().catch(console.error);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Open Cloud API Running on port ${PORT}`));
