@@ -18,9 +18,15 @@ if (!ROBLOX_API_KEY) {
 const whitelistData = [
     { 
         groupname: "SeintSlavx Main Group", 
-        groupid: 32363103, // Matches Admin.Core.GroupID
-        groupsecretkey: "9e2c7b4f1a6d0e8f5c3b9a4d7e1f2c8b6a5", // Matches your SetupMEV2 APIKeyV2
+        groupid: 32363103,
+        groupsecretkey: "9e2c7b4f1a6d0e8f5c3b9a4d7e1f2c8b6a5",
         Suspended: false 
+    },
+    {
+        groupname: "|USA| United States Armed Forces Group",
+        groupid: 55881301,
+        groupsecretkey: "4e27ba6d0e8f5c3b9a4d7e1f2c8b6a58ds7",
+        Suspended: false
     }
 ];
 
