@@ -27,9 +27,20 @@ const whitelistData = [
         groupid: 55881301,
         groupsecretkey: "4e27ba6d0e8f5c3b9a4d7e1f2c8b6a58ds7",
         Suspended: false
+    },
+    { 
+        groupname: "HCFD Hillview City Fire Department", 
+        groupid: 524625249,
+        groupsecretkey: "7f3a9c2e8b1d6a4f5c0e7b9a2d8f1c6e",
+        Suspended: false 
+    },
+    {
+        groupname: "FBI Federal Bureau of Investigation",
+        groupid: 676023417,
+        groupsecretkey: "2c8e5f1a9d7b4e6c0f3a8b2d5e1c9f7a",
+        Suspended: false
     }
 ];
-
 // =============================
 // SECURE STARTUP CHECK
 // =============================
